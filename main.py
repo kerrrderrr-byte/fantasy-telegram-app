@@ -4,25 +4,59 @@ from pydantic import BaseModel
 import sqlite3
 import os
 import re
+import json
 
 app = FastAPI()
 
+# Загружаем переменные (если есть)
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
 DB_PATH = "characters.db"
 
+# Описания классов
 CLASS_DESCRIPTIONS = {
-    "Маг": "Владыка стихий и древних заклинаний. Наносит огромный магический урон, но хрупок в ближнем бою. Идеален для тех, кто любит стратегию и контроль.",
-    "Воин": "Неудержимая сила и ярость. Высокое здоровье и урон в ближнем бою. Лучший выбор для лобовых столкновений.",
-    "Ассасин": "Тень, что поражает с тыла. Высокий критический урон и уклонение. Идеален для быстрых, смертоносных атак.",
-    "Лучник": "Мастер дистанционного боя. Наносит урон издалека, имеет высокую точность и подвижность. Отличен для тактических игроков.",
-    "Рыцарь": "Щит и меч королевства. Высокая защита и выносливость. Может отвлекать врагов и защищать союзников.",
+    "Маг": "Владыка стихий и древних заклинаний. Наносит огромный магический урон, но хрупок в ближнем бою.",
+    "Воин": "Неудержимая сила и ярость. Высокое здоровье и урон в ближнем бою.",
+    "Ассасин": "Тень, что поражает с тыла. Высокий критический урон и уклонение.",
+    "Лучник": "Мастер дистанционного боя. Наносит урон издалека с высокой точностью.",
+    "Рыцарь": "Щит и меч королевства. Высокая защита и выносливость.",
 }
 
+# Базовые характеристики по классам
 CLASS_STATS = {
     "Маг": {"str": 5, "dex": 8, "int": 18},
     "Воин": {"str": 18, "dex": 8, "int": 5},
     "Ассасин": {"str": 12, "dex": 18, "int": 8},
     "Лучник": {"str": 10, "dex": 16, "int": 10},
     "Рыцарь": {"str": 16, "dex": 10, "int": 8},
+}
+
+# Стартовое снаряжение
+STARTING_GEAR = {
+    "Маг": {"weapon": "Посох ученика", "armor": "Мантия новичка"},
+    "Воин": {"weapon": "Деревянный меч", "armor": "Кожаный доспех"},
+    "Ассасин": {"weapon": "Кинжал разбойника", "armor": "Тёмная одежда"},
+    "Лучник": {"weapon": "Дубовый лук", "armor": "Лёгкая куртка"},
+    "Рыцарь": {"weapon": "Железный меч", "armor": "Кольчуга"},
+}
+
+# Статы оружия
+WEAPON_STATS = {
+    "Посох ученика": {"type": "magic", "base_damage": 10},
+    "Деревянный меч": {"type": "melee", "base_damage": 8},
+    "Кинжал разбойника": {"type": "melee", "base_damage": 7},
+    "Дубовый лук": {"type": "ranged", "base_damage": 9},
+    "Железный меч": {"type": "melee", "base_damage": 12},
+}
+
+# Статы брони
+ARMOR_STATS = {
+    "Мантия новичка": {"hp_bonus": 10},
+    "Кожаный доспех": {"hp_bonus": 20},
+    "Тёмная одежда": {"hp_bonus": 15},
+    "Лёгкая куртка": {"hp_bonus": 18},
+    "Кольчуга": {"hp_bonus": 25},
 }
 
 def init_db():
@@ -32,6 +66,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS characters (
             user_id INTEGER PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
+            nickname TEXT,
             name TEXT,
             class TEXT,
             level INTEGER DEFAULT 1,
@@ -39,12 +74,20 @@ def init_db():
             dex INTEGER DEFAULT 0,
             int INTEGER DEFAULT 0,
             stat_points INTEGER DEFAULT 3,
+            hp INTEGER DEFAULT 100,
+            max_hp INTEGER DEFAULT 100,
+            mana INTEGER DEFAULT 100,
+            max_mana INTEGER DEFAULT 100,
+            weapon TEXT,
+            armor TEXT,
+            inventory TEXT DEFAULT '[]',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
     conn.close()
 
+# Модели
 class UsernameCreate(BaseModel):
     user_id: int
     username: str
@@ -57,7 +100,7 @@ class StatUpdate(BaseModel):
     user_id: int
     stat: str
 
-# === SCREENS ===
+# === ЭКРАНЫ ===
 
 @app.get("/app", response_class=HTMLResponse)
 def screen_username():
@@ -91,42 +134,27 @@ def screen_username():
             </div>
         </div>
         <script>
-            Telegram.WebApp.ready();
-            Telegram.WebApp.expand();
-
+            Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const user = Telegram.WebApp.initDataUnsafe?.user;
             if (!user) {
                 document.body.innerHTML = '<div style="text-align:center;padding:50px;color:red;">❌ Вне Telegram!</div>';
             } else {
-                // Проверяем, есть ли персонаж
                 fetch(`/api/character/${user.id}`)
                     .then(res => {
                         if (res.ok) {
-                            // Уже есть персонаж → в меню
                             window.location.href = '/app/main_menu?user_id=' + user.id;
                         } else {
-                            // Нет персонажа → показываем форму
                             document.getElementById('loading').style.display = 'none';
                             document.getElementById('form').style.display = 'block';
                         }
-                    })
-                    .catch(() => {
-                        document.getElementById('loading').textContent = 'Ошибка подключения';
                     });
             }
-
             async function submitUsername() {
                 const username = document.getElementById('username').value.trim();
                 const errorDiv = document.getElementById('error');
                 errorDiv.textContent = '';
-                if (!username || username.length < 3) {
-                    errorDiv.textContent = 'Ник должен быть от 3 символов';
-                    return;
-                }
-                if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
-                    errorDiv.textContent = 'Только буквы, цифры, _';
-                    return;
-                }
+                if (!username || username.length < 3) { errorDiv.textContent = 'Ник от 3 символов'; return; }
+                if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) { errorDiv.textContent = 'Только буквы, цифры, _'; return; }
                 try {
                     const res = await fetch('/api/check_username', {
                         method: 'POST',
@@ -139,9 +167,7 @@ def screen_username():
                     } else {
                         errorDiv.textContent = data.detail;
                     }
-                } catch (e) {
-                    errorDiv.textContent = 'Ошибка сети';
-                }
+                } catch (e) { errorDiv.textContent = 'Ошибка сети'; }
             }
         </script>
     </body>
@@ -222,18 +248,22 @@ def screen_class_info():
             const className = decodeURIComponent(urlParams.get('class'));
             const userId = urlParams.get('user_id');
             const descriptions = {
-                "Маг": "Владыка стихий и древних заклинаний. Наносит огромный магический урон, но хрупок в ближнем бою. Идеален для тех, кто любит стратегию и контроль.",
-                "Воин": "Неудержимая сила и ярость. Высокое здоровье и урон в ближнем бою. Лучший выбор для лобовых столкновений.",
-                "Ассасин": "Тень, что поражает с тыла. Высокий критический урон и уклонение. Идеален для быстрых, смертоносных атак.",
-                "Лучник": "Мастер дистанционного боя. Наносит урон издалека, имеет высокую точность и подвижность. Отличен для тактических игроков.",
-                "Рыцарь": "Щит и меч королевства. Высокая защита и выносливость. Может отвлекать врагов и защищать союзников."
+                "Маг": "Владыка стихий и древних заклинаний. Наносит огромный магический урон, но хрупок в ближнем бою.",
+                "Воин": "Неудержимая сила и ярость. Высокое здоровье и урон в ближнем бою.",
+                "Ассасин": "Тень, что поражает с тыла. Высокий критический урон и уклонение.",
+                "Лучник": "Мастер дистанционного боя. Наносит урон издалека с высокой точностью.",
+                "Рыцарь": "Щит и меч королевства. Высокая защита и выносливость."
             };
             document.getElementById('class-title').textContent = className;
             document.getElementById('class-desc').textContent = descriptions[className] || 'Описание отсутствует';
             function goBack() { window.location.href = '/app/class_select?user_id=' + userId; }
             async function confirmClass() {
                 try {
-                    const res = await fetch('/api/create_character', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({user_id: userId, class_name: className}) });
+                    const res = await fetch('/api/create_character', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({user_id: userId, class_name: className})
+                    });
                     if (res.ok) window.location.href = '/app/main_menu?user_id=' + userId;
                     else alert('Ошибка создания персонажа');
                 } catch (e) { alert('Ошибка сети'); }
@@ -256,34 +286,51 @@ def screen_main_menu():
         <style>
             body { font-family: system-ui; background: #0f0c1a; color: white; padding: 20px; margin: 0; }
             .container { max-width: 500px; margin: 0 auto; }
-            h1 { color: #8a6bff; text-align: center; }
-            .menu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 30px; }
-            .menu-btn { background: #1a1726; color: white; border: 2px solid #8a6bff; border-radius: 12px; padding: 20px; font-size: 18px; cursor: pointer; transition: all 0.2s; text-align: center; }
+            .header { text-align: center; margin-bottom: 20px; }
+            .nickname { color: gold; font-size: 20px; }
+            h1 { color: #8a6bff; }
+            .menu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 20px; }
+            .menu-btn { background: #1a1726; color: white; border: 2px solid #8a6bff; border-radius: 12px; padding: 20px; font-size: 16px; cursor: pointer; transition: all 0.2s; text-align: center; }
             .menu-btn:hover { background: #8a6bff; transform: scale(1.03); }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🏰 Главное меню</h1>
+            <div class="header">
+                <div class="nickname" id="nickname">Загрузка...</div>
+                <h1>🏰 Главное меню</h1>
+            </div>
             <div class="menu-grid">
                 <div class="menu-btn" onclick="goTo('/app/adventure')">Приключение</div>
                 <div class="menu-btn" onclick="goTo('/app/friends')">Друзья</div>
                 <div class="menu-btn" onclick="goTo('/app/clans')">Кланы</div>
                 <div class="menu-btn" onclick="goTo('/app/profile')">Профиль</div>
                 <div class="menu-btn" onclick="goTo('/app/character')">Персонаж</div>
+                <div class="menu-btn" onclick="goTo('/app/inventory')">Инвентарь</div>
             </div>
         </div>
         <script>
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
             const userId = urlParams.get('user_id');
-            function goTo(path) { window.location.href = path + '?user_id=' + userId; }
+            async function loadNickname() {
+                try {
+                    const res = await fetch(`/api/character/${userId}`);
+                    const data = await res.json();
+                    if (res.ok) {
+                        document.getElementById('nickname').textContent = data.nickname || 'Герой';
+                    }
+                } catch (e) { console.error(e); }
+            }
+            function goTo(path) {
+                window.location.href = path + '?user_id=' + userId;
+            }
+            loadNickname();
         </script>
     </body>
     </html>
     """
 
-# Экран персонажа (распределение очков)
 @app.get("/app/character", response_class=HTMLResponse)
 def screen_character():
     return """
@@ -307,7 +354,7 @@ def screen_character():
     <body>
         <div class="container">
             <div class="back" onclick="goBack()"><span>←</span> Назад в меню</div>
-            <h1>🛡️ Мой персонаж</h1>
+            <h1>🛡️ <span id="nickname">Герой</span></h1>
             <div class="points" id="points">Загрузка...</div>
             <div class="stat">
                 <span>Сила</span>
@@ -323,20 +370,19 @@ def screen_character():
             </div>
         </div>
         <script>
-            Telegram.WebApp.ready();
-            Telegram.WebApp.expand();
+            Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
             const userId = urlParams.get('user_id');
-
+            let points = 0;
             function goBack() {
                 window.location.href = '/app/main_menu?user_id=' + userId;
             }
-
             async function loadCharacter() {
                 try {
                     const res = await fetch(`/api/character/${userId}`);
                     const data = await res.json();
                     if (res.ok) {
+                        document.getElementById('nickname').textContent = data.nickname || 'Герой';
                         document.getElementById('str-val').textContent = data.str;
                         document.getElementById('dex-val').textContent = data.dex;
                         document.getElementById('int-val').textContent = data.int;
@@ -346,8 +392,6 @@ def screen_character():
                     }
                 } catch (e) { console.error(e); }
             }
-
-            let points = 0;
             function updateButtons() {
                 const btns = ['str', 'dex', 'int'];
                 btns.forEach(stat => {
@@ -356,7 +400,6 @@ def screen_character():
                     btn.style.opacity = points > 0 ? '1' : '0.5';
                 });
             }
-
             async function addStat(stat) {
                 if (points <= 0) return;
                 try {
@@ -374,68 +417,77 @@ def screen_character():
                     }
                 } catch (e) { alert('Ошибка'); }
             }
-
             loadCharacter();
         </script>
     </body>
     </html>
     """
 
-# === API ===
+@app.get("/app/inventory", response_class=HTMLResponse)
+def screen_inventory():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Инвентарь</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            body { font-family: system-ui; background: #0f0c1a; color: white; padding: 20px; margin: 0; }
+            .container { max-width: 500px; margin: 0 auto; }
+            .back { color: #8a6bff; cursor: pointer; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+            h1 { color: #8a6bff; text-align: center; }
+            .item { background: #1a1726; padding: 12px; border-radius: 8px; margin: 10px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="back" onclick="goBack()"><span>←</span> Назад в меню</div>
+            <h1>🎒 Инвентарь</h1>
+            <div id="items">Загрузка...</div>
+        </div>
+        <script>
+            Telegram.WebApp.ready(); Telegram.WebApp.expand();
+            const urlParams = new URLSearchParams(window.location.search);
+            const userId = urlParams.get('user_id');
+            function goBack() {
+                window.location.href = '/app/main_menu?user_id=' + userId;
+            }
+            const WEAPON_STATS = {
+                "Посох ученика": {type: "magic", base: 10},
+                "Деревянный меч": {type: "melee", base: 8},
+                "Кинжал разбойника": {type: "melee", base: 7},
+                "Дубовый лук": {type: "ranged", base: 9},
+                "Железный меч": {type: "melee", base: 12},
+            };
+            async function loadInventory() {
+                try {
+                    const res = await fetch(`/api/character/${userId}`);
+                    const data = await res.json();
+                    if (res.ok) {
+                        let html = '';
+                        const weapon = data.weapon;
+                        const weaponStat = WEAPON_STATS[weapon] || {base: 0, type: "melee"};
+                        let bonus = 0;
+                        if (weaponStat.type === "melee") bonus = data.str;
+                        else if (weaponStat.type === "ranged") bonus = data.dex;
+                        else if (weaponStat.type === "magic") bonus = data.int;
+                        const totalDamage = weaponStat.base + bonus;
+                        html += `<div class="item"><strong>Оружие:</strong> ${weapon} (${weaponStat.base} + ${bonus} = ${totalDamage} урона)</div>`;
+                        html += `<div class="item"><strong>Броня:</strong> ${data.armor}</div>`;
+                        html += `<div class="item">Доп. предметы: (пока нет)</div>`;
+                        document.getElementById('items').innerHTML = html;
+                    }
+                } catch (e) { console.error(e); }
+            }
+            loadInventory();
+        </script>
+    </body>
+    </html>
+    """
 
-@app.post("/api/check_username")
-async def check_username(data: UsernameCreate):
-    if not re.match(r"^[a-zA-Z0-9_]{3,16}$", data.username):
-        raise HTTPException(status_code=400, detail="Неверный формат ника")
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM characters WHERE username = ?", (data.username,))
-    if cursor.fetchone():
-        raise HTTPException(status_code=400, detail="Такой ник уже занят")
-    cursor.execute("INSERT OR REPLACE INTO characters (user_id, username, name) VALUES (?, ?, ?)", (data.user_id, data.username, data.username))
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
-
-@app.post("/api/create_character")
-async def create_character(data: CharacterCreate):
-    if data.class_name not in CLASS_STATS:
-        raise HTTPException(status_code=400, detail="Неверный класс")
-    base = CLASS_STATS[data.class_name]
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE characters SET class = ?, str = ?, dex = ?, int = ?, stat_points = 3 WHERE user_id = ?", (data.class_name, base["str"], base["dex"], base["int"], data.user_id))
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
-
-@app.get("/api/character/{user_id}")
-async def get_character(user_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT str, dex, int, stat_points FROM characters WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row:
-        raise HTTPException(status_code=404, detail="Персонаж не найден")
-    return {"str": row[0], "dex": row[1], "int": row[2], "stat_points": row[3]}
-
-@app.post("/api/add_stat")
-async def add_stat(data: StatUpdate):
-    if data.stat not in ["str", "dex", "int"]:
-        raise HTTPException(status_code=400, detail="Неверная характеристика")
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT stat_points FROM characters WHERE user_id = ?", (data.user_id,))
-    row = cursor.fetchone()
-    if not row or row[0] <= 0:
-        raise HTTPException(status_code=400, detail="Нет очков характеристик")
-    cursor.execute(f"UPDATE characters SET {data.stat} = {data.stat} + 1, stat_points = stat_points - 1 WHERE user_id = ?", (data.user_id,))
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
-
-# Заглушки для других меню
+# === ЗАГЛУШКИ ===
 @app.get("/app/adventure", response_class=HTMLResponse)
 def adventure():
     return """
@@ -475,6 +527,101 @@ def profile():
     </div>
     <script>Telegram.WebApp.ready();</script>
     """
+
+# === API ===
+@app.post("/api/check_username")
+async def check_username(data: UsernameCreate):
+    if not re.match(r"^[a-zA-Z0-9_]{3,16}$", data.username):
+        raise HTTPException(status_code=400, detail="Неверный формат ника")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM characters WHERE username = ?", (data.username,))
+    if cursor.fetchone():
+        raise HTTPException(status_code=400, detail="Такой ник уже занят")
+    cursor.execute("INSERT OR REPLACE INTO characters (user_id, username) VALUES (?, ?)", (data.user_id, data.username))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+@app.post("/api/create_character")
+async def create_character(data: CharacterCreate):
+    if data.class_name not in CLASS_STATS:
+        raise HTTPException(status_code=400, detail="Неверный класс")
+    base = CLASS_STATS[data.class_name]
+    gear = STARTING_GEAR[data.class_name]
+    weapon = gear["weapon"]
+    armor = gear["armor"]
+    armor_bonus = ARMOR_STATS[armor]["hp_bonus"]
+    max_hp = 80 + base["str"] * 4 + armor_bonus
+    max_mana = 50 + base["int"] * 5
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE characters 
+        SET class = ?, str = ?, dex = ?, int = ?, stat_points = 3,
+            nickname = username,
+            weapon = ?, armor = ?,
+            hp = ?, max_hp = ?,
+            mana = ?, max_mana = ?,
+            inventory = ?
+        WHERE user_id = ?
+    """, (
+        data.class_name, base["str"], base["dex"], base["int"],
+        weapon, armor,
+        max_hp, max_hp,
+        max_mana, max_mana,
+        '[]',
+        data.user_id
+    ))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+@app.get("/api/character/{user_id}")
+async def get_character(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT nickname, class, str, dex, int, stat_points, 
+               hp, max_hp, mana, max_mana, weapon, armor, inventory
+        FROM characters WHERE user_id = ?
+    """, (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Персонаж не найден")
+    return {
+        "nickname": row[0],
+        "class": row[1],
+        "str": row[2],
+        "dex": row[3],
+        "int": row[4],
+        "stat_points": row[5],
+        "hp": row[6],
+        "max_hp": row[7],
+        "mana": row[8],
+        "max_mana": row[9],
+        "weapon": row[10],
+        "armor": row[11],
+        "inventory": row[12],
+    }
+
+@app.post("/api/add_stat")
+async def add_stat(data: StatUpdate):
+    if data.stat not in ["str", "dex", "int"]:
+        raise HTTPException(status_code=400, detail="Неверная характеристика")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT stat_points FROM characters WHERE user_id = ?", (data.user_id,))
+    row = cursor.fetchone()
+    if not row or row[0] <= 0:
+        raise HTTPException(status_code=400, detail="Нет очков характеристик")
+    cursor.execute(f"UPDATE characters SET {data.stat} = {data.stat} + 1, stat_points = stat_points - 1 WHERE user_id = ?", (data.user_id,))
+    conn.commit()
+    conn.close()
+    # Обновим HP/Mana при изменении характеристик
+    return {"status": "ok"}
+
 # Health
 @app.get("/health")
 def health():
