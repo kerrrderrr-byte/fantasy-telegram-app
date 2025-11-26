@@ -67,7 +67,7 @@ def screen_username():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Ввести ник</title>
+        <title>Fantasy Quest</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
             body { font-family: system-ui; background: #0f0c1a; color: white; padding: 20px; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
@@ -76,32 +76,72 @@ def screen_username():
             input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #8a6bff; background: #1a1726; color: white; margin: 20px 0; box-sizing: border-box; }
             .btn { background: #8a6bff; color: white; border: none; border-radius: 8px; padding: 12px 24px; font-size: 16px; cursor: pointer; width: 100%; }
             .error { color: #ff6b6b; margin: 10px 0; }
+            .loading { color: #8a6bff; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🧙 Введи ник</h1>
-            <p>Выбери уникальное имя героя (3–16 символов, буквы и цифры)</p>
-            <input type="text" id="username" placeholder="Например: DarkMage" maxlength="16">
-            <div class="error" id="error"></div>
-            <button class="btn" onclick="submitUsername()">Далее</button>
+            <h1>🧙 Fantasy Quest</h1>
+            <div class="loading" id="loading">Проверка аккаунта...</div>
+            <div id="form" style="display:none;">
+                <p>Выбери уникальное имя героя (3–16 символов, буквы и цифры)</p>
+                <input type="text" id="username" placeholder="Например: DarkMage" maxlength="16">
+                <div class="error" id="error"></div>
+                <button class="btn" onclick="submitUsername()">Далее</button>
+            </div>
         </div>
         <script>
-            Telegram.WebApp.ready(); Telegram.WebApp.expand();
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+
             const user = Telegram.WebApp.initDataUnsafe?.user;
-            if (!user) document.body.innerHTML = '<div style="text-align:center;padding:50px;color:red;">❌ Вне Telegram!</div>';
+            if (!user) {
+                document.body.innerHTML = '<div style="text-align:center;padding:50px;color:red;">❌ Вне Telegram!</div>';
+            } else {
+                // Проверяем, есть ли персонаж
+                fetch(`/api/character/${user.id}`)
+                    .then(res => {
+                        if (res.ok) {
+                            // Уже есть персонаж → в меню
+                            window.location.href = '/app/main_menu?user_id=' + user.id;
+                        } else {
+                            // Нет персонажа → показываем форму
+                            document.getElementById('loading').style.display = 'none';
+                            document.getElementById('form').style.display = 'block';
+                        }
+                    })
+                    .catch(() => {
+                        document.getElementById('loading').textContent = 'Ошибка подключения';
+                    });
+            }
+
             async function submitUsername() {
                 const username = document.getElementById('username').value.trim();
                 const errorDiv = document.getElementById('error');
                 errorDiv.textContent = '';
-                if (!username || username.length < 3) { errorDiv.textContent = 'Ник должен быть от 3 символов'; return; }
-                if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) { errorDiv.textContent = 'Только буквы, цифры, _'; return; }
+                if (!username || username.length < 3) {
+                    errorDiv.textContent = 'Ник должен быть от 3 символов';
+                    return;
+                }
+                if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
+                    errorDiv.textContent = 'Только буквы, цифры, _';
+                    return;
+                }
                 try {
-                    const res = await fetch('/api/check_username', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({user_id: user.id, username: username}) });
+                    const res = await fetch('/api/check_username', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({user_id: user.id, username: username})
+                    });
                     const data = await res.json();
-                    if (res.ok) window.location.href = '/app/class_select?user_id=' + user.id;
-                    else errorDiv.textContent = data.detail;
-                } catch (e) { errorDiv.textContent = 'Ошибка сети'; }
+                    if (res.ok) {
+                        window.location.href = '/app/class_select?user_id=' + user.id;
+                    } else {
+                        errorDiv.textContent = data.detail;
+                    }
+                } catch (e) {
+                    errorDiv.textContent = 'Ошибка сети';
+                }
             }
         </script>
     </body>
@@ -257,6 +297,7 @@ def screen_character():
         <style>
             body { font-family: system-ui; background: #0f0c1a; color: white; padding: 20px; margin: 0; }
             .container { max-width: 500px; margin: 0 auto; }
+            .back { color: #8a6bff; cursor: pointer; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
             h1 { color: #8a6bff; text-align: center; }
             .stat { background: #1a1726; padding: 15px; border-radius: 12px; margin: 12px 0; display: flex; justify-content: space-between; align-items: center; }
             .btn { background: #8a6bff; color: white; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
@@ -265,6 +306,7 @@ def screen_character():
     </head>
     <body>
         <div class="container">
+            <div class="back" onclick="goBack()"><span>←</span> Назад в меню</div>
             <h1>🛡️ Мой персонаж</h1>
             <div class="points" id="points">Загрузка...</div>
             <div class="stat">
@@ -281,10 +323,14 @@ def screen_character():
             </div>
         </div>
         <script>
-            Telegram.WebApp.ready(); Telegram.WebApp.expand();
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
             const userId = urlParams.get('user_id');
-            let points = 0;
+
+            function goBack() {
+                window.location.href = '/app/main_menu?user_id=' + userId;
+            }
 
             async function loadCharacter() {
                 try {
@@ -301,6 +347,7 @@ def screen_character():
                 } catch (e) { console.error(e); }
             }
 
+            let points = 0;
             function updateButtons() {
                 const btns = ['str', 'dex', 'int'];
                 btns.forEach(stat => {
@@ -391,20 +438,43 @@ async def add_stat(data: StatUpdate):
 # Заглушки для других меню
 @app.get("/app/adventure", response_class=HTMLResponse)
 def adventure():
-    return "<h1 style='color:white;background:#0f0c1a;padding:20px;'>🌲 Приключение скоро будет!</h1><script>Telegram.WebApp.ready();</script>"
+    return """
+    <div style="color:white;background:#0f0c1a;padding:20px;">
+        <div style="color:#8a6bff;cursor:pointer;margin-bottom:20px;" onclick="history.back()">← Назад в меню</div>
+        <h1>🌲 Приключение скоро будет!</h1>
+    </div>
+    <script>Telegram.WebApp.ready();</script>
+    """
 
 @app.get("/app/friends", response_class=HTMLResponse)
 def friends():
-    return "<h1 style='color:white;background:#0f0c1a;padding:20px;'>👥 Друзья скоро будут!</h1><script>Telegram.WebApp.ready();</script>"
+    return """
+    <div style="color:white;background:#0f0c1a;padding:20px;">
+        <div style="color:#8a6bff;cursor:pointer;margin-bottom:20px;" onclick="history.back()">← Назад в меню</div>
+        <h1>👥 Друзья скоро будут!</h1>
+    </div>
+    <script>Telegram.WebApp.ready();</script>
+    """
 
 @app.get("/app/clans", response_class=HTMLResponse)
 def clans():
-    return "<h1 style='color:white;background:#0f0c1a;padding:20px;'>🏰 Кланы скоро будут!</h1><script>Telegram.WebApp.ready();</script>"
+    return """
+    <div style="color:white;background:#0f0c1a;padding:20px;">
+        <div style="color:#8a6bff;cursor:pointer;margin-bottom:20px;" onclick="history.back()">← Назад в меню</div>
+        <h1>🏰 Кланы скоро будут!</h1>
+    </div>
+    <script>Telegram.WebApp.ready();</script>
+    """
 
 @app.get("/app/profile", response_class=HTMLResponse)
 def profile():
-    return "<h1 style='color:white;background:#0f0c1a;padding:20px;'>👤 Профиль скоро будет!</h1><script>Telegram.WebApp.ready();</script>"
-
+    return """
+    <div style="color:white;background:#0f0c1a;padding:20px;">
+        <div style="color:#8a6bff;cursor:pointer;margin-bottom:20px;" onclick="history.back()">← Назад в меню</div>
+        <h1>👤 Профиль скоро будет!</h1>
+    </div>
+    <script>Telegram.WebApp.ready();</script>
+    """
 # Health
 @app.get("/health")
 def health():
