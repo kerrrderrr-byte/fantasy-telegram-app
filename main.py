@@ -550,79 +550,83 @@ def adventure_screen():
             .container { max-width: 500px; margin: 0 auto; }
             .back { color: #8a6bff; cursor: pointer; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
             h1 { color: #8a6bff; text-align: center; }
-            .story { background: #1a1726; padding: 20px; border-radius: 12px; margin: 20px 0; line-height: 1.6; }
-            .btn { background: #8a6bff; color: white; border: none; border-radius: 8px; padding: 14px; font-size: 18px; cursor: pointer; width: 100%; margin-top: 20px; }
-            .hp-bar { background: #333; height: 20px; border-radius: 10px; margin: 10px 0; overflow: hidden; }
-            .hp-fill { height: 100%; background: #4caf50; }
-            .status { text-align: center; margin: 10px 0; }
+            .log { background: #1a1726; padding: 15px; border-radius: 12px; margin: 10px 0; height: 300px; overflow-y: auto; line-height: 1.5; }
+            .input-area { display: flex; gap: 10px; margin-top: 15px; }
+            input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #8a6bff; background: #1a1726; color: white; }
+            button { background: #8a6bff; color: white; border: none; border-radius: 8px; padding: 12px 16px; cursor: pointer; }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="back" onclick="goBack()"><span>←</span> Назад в меню</div>
             <h1>🌲 Приключение</h1>
-            <div class="status" id="hpStatus">HP: <span id="hpVal">100</span>/<span id="maxHpVal">100</span></div>
-            <div class="hp-bar"><div class="hp-fill" id="hpFill" style="width:100%"></div></div>
-            <div class="story" id="story">Нажми «Начать приключение», чтобы отправиться в путь...</div>
-            <button class="btn" id="startBtn" onclick="startAdventure()">Начать приключение</button>
+            <div class="log" id="log">Нажми "Начать", чтобы начать приключение...</div>
+            <div class="input-area">
+                <input type="text" id="action" placeholder="Что ты делаешь?" />
+                <button onclick="sendAction()">Отправить</button>
+            </div>
         </div>
         <script>
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
             const userId = urlParams.get('user_id');
-            let currentHp = 100, maxHp = 100;
+            let conversation = [];
 
             function goBack() {
                 window.location.href = '/app/main_menu?user_id=' + userId;
             }
 
-            async function loadCharacter() {
-                try {
-                    const res = await fetch(`/api/character/${userId}`);
-                    const data = await res.json();
-                    if (res.ok) {
-                        currentHp = data.hp;
-                        maxHp = data.max_hp;
-                        document.getElementById('hpVal').textContent = currentHp;
-                        document.getElementById('maxHpVal').textContent = maxHp;
-                        document.getElementById('hpFill').style.width = (currentHp / maxHp * 100) + '%';
-                    }
-                } catch (e) { console.error(e); }
-            }
-
             async function startAdventure() {
-                const btn = document.getElementById('startBtn');
-                btn.disabled = true;
-                btn.textContent = 'Генерация...';
-
                 try {
-                    const res = await fetch(`/api/adventure?user_id=${userId}`);
+                    const res = await fetch(`/api/adventure?user_id=${userId}&action=start`);
                     const data = await res.json();
                     if (res.ok) {
-                        document.getElementById('story').innerHTML = data.narrative.replace(/\n/g, '<br>');
-                        currentHp = data.hp;
-                        document.getElementById('hpVal').textContent = currentHp;
-                        document.getElementById('hpFill').style.width = (currentHp / maxHp * 100) + '%';
-
-                        if (!data.survived) {
-                            document.getElementById('story').innerHTML += '<br><br><strong style="color:red;">💀 Ты пал в бою... Возвращайся в город!</strong>';
-                            btn.textContent = 'Вернуться в город';
-                            btn.onclick = goBack;
-                        } else {
-                            btn.textContent = 'Еще раз';
-                            btn.disabled = false;
-                        }
+                        conversation = [{role: "assistant", content: data.narrative}];
+                        document.getElementById('log').innerHTML = formatLog(conversation);
                     } else {
-                        document.getElementById('story').textContent = 'Ошибка: ' + (data.detail || 'сервер недоступен');
-                        btn.disabled = false;
+                        document.getElementById('log').textContent = 'Ошибка: ' + data.detail;
                     }
                 } catch (e) {
-                    document.getElementById('story').textContent = 'Ошибка сети';
-                    btn.disabled = false;
+                    document.getElementById('log').textContent = 'Ошибка сети';
                 }
             }
 
-            loadCharacter();
+            async function sendAction() {
+                const input = document.getElementById('action');
+                const action = input.value.trim();
+                if (!action) return;
+
+                // Добавляем действие игрока в лог
+                conversation.push({role: "user", content: action});
+                document.getElementById('log').innerHTML = formatLog(conversation);
+
+                try {
+                    const res = await fetch(`/api/adventure?user_id=${userId}&action=${encodeURIComponent(action)}`);
+                    const data = await res.json();
+                    if (res.ok) {
+                        conversation.push({role: "assistant", content: data.narrative});
+                        document.getElementById('log').innerHTML = formatLog(conversation);
+                    } else {
+                        conversation.push({role: "assistant", content: "Ошибка: " + data.detail});
+                        document.getElementById('log').innerHTML = formatLog(conversation);
+                    }
+                } catch (e) {
+                    conversation.push({role: "assistant", content: "Ошибка сети"});
+                    document.getElementById('log').innerHTML = formatLog(conversation);
+                }
+
+                input.value = '';
+            }
+
+            function formatLog(log) {
+                return log.map(msg => {
+                    if (msg.role === "user") return `<div><strong>Ты:</strong> ${msg.content}</div>`;
+                    else return `<div><strong>Мастер:</strong> ${msg.content}</div>`;
+                }).join('<br>');
+            }
+
+            // При загрузке — начинаем приключение
+            startAdventure();
         </script>
     </body>
     </html>
@@ -812,7 +816,7 @@ async def call_deepseek_for_adventure(player_data: dict):
 
 # =============== ADVENTURE ENDPOINT ===============
 @app.get("/api/adventure")
-async def adventure_endpoint(user_id: int):
+async def adventure_endpoint(user_id: int, action: str = "start"):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
@@ -839,25 +843,58 @@ async def adventure_endpoint(user_id: int):
         "armor": row[10],
     }
 
-    result = await call_deepseek_for_adventure(player_data)
+    # Системный промпт — теперь с историей
+    system_prompt = DEEPSEEK_SYSTEM_PROMPT + f"""
 
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
+Ты ведёшь приключение с игроком:
+- Имя: {player_data['nickname']}
+- Класс: {player_data['class']}
+- HP: {player_data['hp']}/{player_data['max_hp']}
+- Mana: {player_data['mana']}/{player_data['max_mana']}
+- Сила: {player_data['str']}, Ловкость: {player_data['dex']}, Интеллект: {player_data['int']}
+- Оружие: {player_data['weapon']}
+- Броня: {player_data['armor']}
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    new_hp = max(0, player_data["hp"] + result["outcome"].get("player_hp_change", 0))
-    cursor.execute("UPDATE characters SET hp = ? WHERE user_id = ?", (new_hp, user_id))
-    conn.commit()
-    conn.close()
+Если действие игрока — "start", опиши начало приключения.
+Если игрок описывает действие — расскажи, что происходит дальше, учитывая его статы и снаряжение.
+"""
 
-    return {
-        "narrative": result["narrative"],
-        "hp": new_hp,
-        "max_hp": player_data["max_hp"],
-        "survived": new_hp > 0
-    }
+    user_prompt = action
 
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "deepseek-chat",
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.8,
+                "max_tokens": 500
+            },
+            timeout=30.0
+        )
+
+    if response.status_code != 200:
+        return {"error": f"DeepSeek error: {response.text}"}
+
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+        # Пытаемся распарсить как JSON, если нет — возвращаем как текст
+        try:
+            result = json.loads(content)
+            narrative = result.get("narrative", content)
+        except:
+            narrative = content
+        return {"narrative": narrative}
+    except Exception as e:
+        return {"error": f"JSON parse error: {str(e)}"}
 
 # Health
 @app.get("/health")
