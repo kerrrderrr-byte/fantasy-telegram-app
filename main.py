@@ -3,12 +3,22 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import sqlite3
 import os
+import re
 
 app = FastAPI()
 
 DB_PATH = "characters.db"
 
-# Базовые параметры по классам
+# Описания классов
+CLASS_DESCRIPTIONS = {
+    "Маг": "Владыка стихий и древних заклинаний. Наносит огромный магический урон, но хрупок в ближнем бою. Идеален для тех, кто любит стратегию и контроль.",
+    "Воин": "Неудержимая сила и ярость. Высокое здоровье и урон в ближнем бою. Лучший выбор для лобовых столкновений.",
+    "Ассасин": "Тень, что поражает с тыла. Высокий критический урон и уклонение. Идеален для быстрых, смертоносных атак.",
+    "Лучник": "Мастер дистанционного боя. Наносит урон издалека, имеет высокую точность и подвижность. Отличен для тактических игроков.",
+    "Рыцарь": "Щит и меч королевства. Высокая защита и выносливость. Может отвлекать врагов и защищать союзников.",
+}
+
+# Базовые параметры
 CLASS_STATS = {
     "Маг": {"str": 5, "dex": 8, "int": 18},
     "Воин": {"str": 18, "dex": 8, "int": 5},
@@ -24,6 +34,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS characters (
             user_id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
             name TEXT,
             class TEXT,
             level INTEGER DEFAULT 1,
@@ -39,42 +50,150 @@ def init_db():
 
 
 # Модели
+class UsernameCreate(BaseModel):
+    user_id: int
+    username: str
+
+
 class CharacterCreate(BaseModel):
     user_id: int
-    name: str
     class_name: str
 
 
-class StatUpdate(BaseModel):
-    user_id: int
-    stat: str  # "str", "dex", "int"
-
-
-# Главная страница — выбор класса
+# === ЭКРАН 1: ВВОД НИКА ===
 @app.get("/app", response_class=HTMLResponse)
-def mini_app():
+def screen_username():
     return """
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Fantasy Quest</title>
+        <title>Ввести ник</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: #0f0c1a;
                 color: white;
+                padding: 20px;
+                margin: 0;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
+                justify-content: center;
+                height: 100vh;
+            }
+            .container {
+                width: 100%;
+                max-width: 350px;
+                text-align: center;
+            }
+            h1 {
+                color: #8a6bff;
+            }
+            input {
+                width: 100%;
+                padding: 12px;
+                border-radius: 8px;
+                border: 1px solid #8a6bff;
+                background: #1a1726;
+                color: white;
+                margin: 20px 0;
+                box-sizing: border-box;
+            }
+            .btn {
+                background: #8a6bff;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 24px;
+                font-size: 16px;
+                cursor: pointer;
+                width: 100%;
+            }
+            .error {
+                color: #ff6b6b;
+                margin: 10px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🧙 Введи ник</h1>
+            <p>Выбери уникальное имя героя (3–16 символов, буквы и цифры)</p>
+            <input type="text" id="username" placeholder="Например: DarkMage" maxlength="16">
+            <div class="error" id="error"></div>
+            <button class="btn" onclick="submitUsername()">Далее</button>
+        </div>
+
+        <script>
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+
+            const user = Telegram.WebApp.initDataUnsafe?.user;
+            if (!user) {
+                document.body.innerHTML = '<div style="text-align:center;padding:50px;color:red;">❌ Вне Telegram!</div>';
+            }
+
+            async function submitUsername() {
+                const username = document.getElementById('username').value.trim();
+                const errorDiv = document.getElementById('error');
+                errorDiv.textContent = '';
+
+                if (!username || username.length < 3) {
+                    errorDiv.textContent = 'Ник должен быть от 3 символов';
+                    return;
+                }
+                if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
+                    errorDiv.textContent = 'Только буквы, цифры, _';
+                    return;
+                }
+
+                try {
+                    const res = await fetch('/api/check_username', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({user_id: user.id, username: username})
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        window.location.href = '/app/class_select?user_id=' + user.id;
+                    } else {
+                        errorDiv.textContent = data.detail;
+                    }
+                } catch (e) {
+                    errorDiv.textContent = 'Ошибка сети';
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+
+# === ЭКРАН 2: ВЫБОР КЛАССА ===
+@app.get("/app/class_select", response_class=HTMLResponse)
+def screen_class_select():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Выбор класса</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #0f0c1a;
+                color: white;
                 padding: 20px;
                 margin: 0;
             }
             .container {
-                width: 100%;
                 max-width: 500px;
+                margin: 0 auto;
             }
             h1 {
                 color: #8a6bff;
@@ -95,74 +214,142 @@ def mini_app():
                 font-size: 16px;
                 cursor: pointer;
                 transition: all 0.2s;
+                text-align: center;
             }
             .class-btn:hover {
                 background: #8a6bff;
                 transform: scale(1.03);
             }
-            .status {
-                margin-top: 20px;
-                padding: 12px;
-                background: #1a1726;
-                border-radius: 8px;
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>⚔️ Выбери класс</h1>
+            <div class="class-grid">
+                <div class="class-btn" onclick="showClass('Маг')">Маг</div>
+                <div class="class-btn" onclick="showClass('Воин')">Воин</div>
+                <div class="class-btn" onclick="showClass('Ассасин')">Ассасин</div>
+                <div class="class-btn" onclick="showClass('Лучник')">Лучник</div>
+                <div class="class-btn" onclick="showClass('Рыцарь')">Рыцарь</div>
+            </div>
+        </div>
+
+        <script>
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+            const urlParams = new URLSearchParams(window.location.search);
+            const userId = urlParams.get('user_id');
+
+            function showClass(className) {
+                window.location.href = '/app/class_info?class=' + encodeURIComponent(className) + '&user_id=' + userId;
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+
+# === ЭКРАН 3: ОПИСАНИЕ КЛАССА ===
+@app.get("/app/class_info", response_class=HTMLResponse)
+def screen_class_info():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Описание класса</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #0f0c1a;
+                color: white;
+                padding: 20px;
+                margin: 0;
+            }
+            .container {
+                max-width: 500px;
+                margin: 0 auto;
+            }
+            .back {
+                color: #8a6bff;
+                cursor: pointer;
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            h1 {
+                color: #8a6bff;
                 text-align: center;
-                display: none;
+            }
+            .desc {
+                background: #1a1726;
+                padding: 20px;
+                border-radius: 12px;
+                margin: 20px 0;
+                line-height: 1.5;
+            }
+            .confirm-btn {
+                background: #8a6bff;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 14px;
+                font-size: 18px;
+                cursor: pointer;
+                width: 100%;
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🧙 Fantasy Quest</h1>
-            <p>Выбери класс своего героя:</p>
-
-            <div class="class-grid" id="classButtons">
-                <button class="class-btn" onclick="selectClass('Маг')">Маг</button>
-                <button class="class-btn" onclick="selectClass('Воин')">Воин</button>
-                <button class="class-btn" onclick="selectClass('Ассасин')">Ассасин</button>
-                <button class="class-btn" onclick="selectClass('Лучник')">Лучник</button>
-                <button class="class-btn" onclick="selectClass('Рыцарь')">Рыцарь</button>
+            <div class="back" onclick="goBack()">
+                <span>←</span> Назад к выбору
             </div>
-
-            <div class="status" id="status"></div>
+            <h1 id="class-title">Загрузка...</h1>
+            <div class="desc" id="class-desc">...</div>
+            <button class="confirm-btn" onclick="confirmClass()">Выбрать этот класс</button>
         </div>
 
         <script>
             Telegram.WebApp.ready();
             Telegram.WebApp.expand();
 
-            const user = Telegram.WebApp.initDataUnsafe?.user;
-            if (!user) {
-                document.getElementById('classButtons').innerHTML = '<p>❌ Запущено вне Telegram!</p>';
+            const urlParams = new URLSearchParams(window.location.search);
+            const className = decodeURIComponent(urlParams.get('class'));
+            const userId = urlParams.get('user_id');
+
+            const descriptions = {
+                "Маг": "Владыка стихий и древних заклинаний. Наносит огромный магический урон, но хрупок в ближнем бою. Идеален для тех, кто любит стратегию и контроль.",
+                "Воин": "Неудержимая сила и ярость. Высокое здоровье и урон в ближнем бою. Лучший выбор для лобовых столкновений.",
+                "Ассасин": "Тень, что поражает с тыла. Высокий критический урон и уклонение. Идеален для быстрых, смертоносных атак.",
+                "Лучник": "Мастер дистанционного боя. Наносит урон издалека, имеет высокую точность и подвижность. Отличен для тактических игроков.",
+                "Рыцарь": "Щит и меч королевства. Высокая защита и выносливость. Может отвлекать врагов и защищать союзников."
+            };
+
+            document.getElementById('class-title').textContent = className;
+            document.getElementById('class-desc').textContent = descriptions[className] || 'Описание отсутствует';
+
+            function goBack() {
+                window.location.href = '/app/class_select?user_id=' + userId;
             }
 
-            async function selectClass(className) {
-                if (!user) return;
-
-                const statusDiv = document.getElementById('status');
-                statusDiv.style.display = 'block';
-                statusDiv.innerHTML = 'Создание персонажа...';
-
+            async function confirmClass() {
                 try {
-                    const response = await fetch('/api/create_character', {
+                    const res = await fetch('/api/create_character', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            user_id: user.id,
-                            name: user.first_name || 'Герой',
-                            class_name: className
-                        })
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({user_id: userId, class_name: className})
                     });
-
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        // Перенаправляем на экран персонажа
-                        window.location.href = '/app/character?user_id=' + user.id;
+                    if (res.ok) {
+                        window.location.href = '/app/main_menu?user_id=' + userId;
                     } else {
-                        statusDiv.innerHTML = `❌ Ошибка: ${data.detail}`;
+                        alert('Ошибка создания персонажа');
                     }
-                } catch (err) {
-                    statusDiv.innerHTML = '❌ Не удалось подключиться к серверу';
+                } catch (e) {
+                    alert('Ошибка сети');
                 }
             }
         </script>
@@ -171,16 +358,16 @@ def mini_app():
     """
 
 
-# Экран персонажа
-@app.get("/app/character", response_class=HTMLResponse)
-def character_screen():
+# === ЭКРАН 4: ГЛАВНОЕ МЕНЮ ===
+@app.get("/app/main_menu", response_class=HTMLResponse)
+def screen_main_menu():
     return """
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Мой персонаж</title>
+        <title>Главное меню</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
             body {
@@ -198,144 +385,100 @@ def character_screen():
                 color: #8a6bff;
                 text-align: center;
             }
-            .stat {
+            .menu-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 16px;
+                margin-top: 30px;
+            }
+            .menu-btn {
                 background: #1a1726;
-                padding: 15px;
-                border-radius: 12px;
-                margin: 12px 0;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-            .btn {
-                background: #8a6bff;
                 color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 8px 16px;
-                cursor: pointer;
-            }
-            .points {
-                text-align: center;
-                margin: 20px 0;
+                border: 2px solid #8a6bff;
+                border-radius: 12px;
+                padding: 20px;
                 font-size: 18px;
-                color: gold;
+                cursor: pointer;
+                transition: all 0.2s;
+                text-align: center;
+            }
+            .menu-btn:hover {
+                background: #8a6bff;
+                transform: scale(1.03);
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🛡️ Мой персонаж</h1>
-            <div class="points" id="points">Очки характеристик: 3</div>
-
-            <div class="stat">
-                <span>Сила</span>
-                <div><span id="str-val">5</span> <button class="btn" onclick="addStat('str')" id="str-btn">+</button></div>
-            </div>
-            <div class="stat">
-                <span>Ловкость</span>
-                <div><span id="dex-val">8</span> <button class="btn" onclick="addStat('dex')" id="dex-btn">+</button></div>
-            </div>
-            <div class="stat">
-                <span>Интеллект</span>
-                <div><span id="int-val">18</span> <button class="btn" onclick="addStat('int')" id="int-btn">+</button></div>
+            <h1>🏰 Главное меню</h1>
+            <div class="menu-grid">
+                <div class="menu-btn" onclick="goTo('/app/adventure')">Приключение</div>
+                <div class="menu-btn" onclick="goTo('/app/friends')">Друзья</div>
+                <div class="menu-btn" onclick="goTo('/app/clans')">Кланы</div>
+                <div class="menu-btn" onclick="goTo('/app/profile')">Профиль</div>
+                <div class="menu-btn" onclick="goTo('/app/character')">Персонаж</div>
             </div>
         </div>
 
         <script>
             Telegram.WebApp.ready();
             Telegram.WebApp.expand();
-
             const urlParams = new URLSearchParams(window.location.search);
             const userId = urlParams.get('user_id');
-            let points = 3;
 
-            // Загрузим данные персонажа
-            async function loadCharacter() {
-                try {
-                    const res = await fetch(`/api/character/${userId}`);
-                    const data = await res.json();
-                    if (res.ok) {
-                        document.getElementById('str-val').textContent = data.str;
-                        document.getElementById('dex-val').textContent = data.dex;
-                        document.getElementById('int-val').textContent = data.int;
-                        points = data.stat_points;
-                        updatePoints();
-                        updateButtons();
-                    }
-                } catch (e) {
-                    console.error(e);
-                }
+            function goTo(path) {
+                window.location.href = path + '?user_id=' + userId;
             }
-
-            function updatePoints() {
-                document.getElementById('points').textContent = `Очки характеристик: ${points}`;
-            }
-
-            function updateButtons() {
-                const btns = ['str', 'dex', 'int'];
-                btns.forEach(stat => {
-                    const btn = document.getElementById(`${stat}-btn`);
-                    btn.disabled = points <= 0;
-                    btn.style.opacity = points > 0 ? '1' : '0.5';
-                });
-            }
-
-            async function addStat(stat) {
-                if (points <= 0) return;
-
-                try {
-                    const res = await fetch('/api/add_stat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: userId, stat: stat })
-                    });
-                    const data = await res.json();
-                    if (res.ok) {
-                        points -= 1;
-                        // Обновим значение на экране
-                        const val = parseInt(document.getElementById(`${stat}-val`).textContent) + 1;
-                        document.getElementById(`${stat}-val`).textContent = val;
-                        updatePoints();
-                        updateButtons();
-                    }
-                } catch (e) {
-                    alert('Ошибка');
-                }
-            }
-
-            loadCharacter();
         </script>
     </body>
     </html>
     """
 
 
-# Создание персонажа
+# === API ENDPOINTS ===
+
+# Проверка уникальности ника
+@app.post("/api/check_username")
+async def check_username(UsernameCreate):
+    if not re.match(r"^[a-zA-Z0-9_]{3,16}$", data.username):
+        raise HTTPException(status_code=400, detail="Неверный формат ника")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM characters WHERE username = ?", (data.username,))
+    if cursor.fetchone():
+        raise HTTPException(status_code=400, detail="Такой ник уже занят")
+
+    # Сохраняем временно (можно и без этого, но для MVP — ок)
+    cursor.execute("""
+        INSERT OR REPLACE INTO characters (user_id, username, name) 
+        VALUES (?, ?, ?)
+    """, (data.user_id, data.username, data.username))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+
+# Создание персонажа (класс)
 @app.post("/api/create_character")
-async def create_character(data: CharacterCreate):
+async def create_character(CharacterCreate):
     if data.class_name not in CLASS_STATS:
         raise HTTPException(status_code=400, detail="Неверный класс")
 
     base = CLASS_STATS[data.class_name]
-
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            INSERT OR REPLACE INTO characters 
-            (user_id, name, class, str, dex, int, stat_points) 
-            VALUES (?, ?, ?, ?, ?, ?, 3)
-        """, (data.user_id, data.name, data.class_name, base["str"], base["dex"], base["int"]))
-        conn.commit()
-        return {"status": "success", "class": data.class_name}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Ошибка БД")
-    finally:
-        conn.close()
+    cursor.execute("""
+        UPDATE characters 
+        SET class = ?, str = ?, dex = ?, int = ?, stat_points = 3
+        WHERE user_id = ?
+    """, (data.class_name, base["str"], base["dex"], base["int"], data.user_id))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
 
 
-# Получение данных персонажа
+# === СТАРЫЕ ЭНДПОИНТЫ (для совместимости) ===
 @app.get("/api/character/{user_id}")
 async def get_character(user_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -353,32 +496,27 @@ async def get_character(user_id: int):
     }
 
 
-# Добавление очка характеристики
 @app.post("/api/add_stat")
-async def add_stat(data: StatUpdate):
+async def add_stat(StatUpdate):
     if data.stat not in ["str", "dex", "int"]:
         raise HTTPException(status_code=400, detail="Неверная характеристика")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    try:
-        # Проверим, есть ли очки
-        cursor.execute("SELECT stat_points FROM characters WHERE user_id = ?", (data.user_id,))
-        row = cursor.fetchone()
-        if not row or row[0] <= 0:
-            raise HTTPException(status_code=400, detail="Нет очков характеристик")
+    cursor.execute("SELECT stat_points FROM characters WHERE user_id = ?", (data.user_id,))
+    row = cursor.fetchone()
+    if not row or row[0] <= 0:
+        raise HTTPException(status_code=400, detail="Нет очков характеристик")
 
-        # Увеличим характеристику и уменьшим очки
-        cursor.execute(
-            f"UPDATE characters SET {data.stat} = {data.stat} + 1, stat_points = stat_points - 1 WHERE user_id = ?",
-            (data.user_id,))
-        conn.commit()
-        return {"status": "ok"}
-    finally:
-        conn.close()
+    cursor.execute(
+        f"UPDATE characters SET {data.stat} = {data.stat} + 1, stat_points = stat_points - 1 WHERE user_id = ?",
+        (data.user_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
 
 
-# Health check
+# Health
 @app.get("/health")
 def health():
     init_db()
