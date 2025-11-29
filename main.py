@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Импортируем модули — они должны лежать в той же папке
-from narrator import narrate_fallback  # Пока без ИИ, только fallback
+from narrator import narrate_with_deepseek, narrate_fallback  # Подключаем ИИ и резерв
 from judge import start_combat, process_combat_round, apply_results
 
 app = FastAPI()
@@ -63,7 +63,6 @@ WEAPON_STATS = {
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
     # Проверяем, есть ли столбец combat_state
     cursor.execute("PRAGMA table_info(characters)")
     columns = [column[1] for column in cursor.fetchall()]
@@ -73,7 +72,6 @@ def init_db():
     else:
         print("Столбец 'combat_state' уже существует.")
 
-    # Создаём таблицу, если её не было (это безопасно, если таблица уже есть)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS characters (
             user_id INTEGER PRIMARY KEY,
@@ -94,7 +92,7 @@ def init_db():
             armor TEXT,
             inventory TEXT DEFAULT '[]',
             adventure_log TEXT DEFAULT '[]'
-            -- combat_state уже добавлен через ALTER TABLE выше
+            -- combat_state добавлен через ALTER TABLE выше
         )
     """)
     conn.commit()
@@ -658,7 +656,7 @@ async def check_username(data: UsernameCreate):
 
 
 @app.post("/api/create_character")
-async def create_character(data: CharacterCreate):
+async def create_character( CharacterCreate):
     if data.class_name not in CLASS_STATS:
         raise HTTPException(status_code=400, detail="Неверный класс")
     base = CLASS_STATS[data.class_name]
@@ -723,7 +721,7 @@ async def get_character(user_id: int):
 
 
 @app.post("/api/add_stat")
-async def add_stat(data: StatUpdate):
+async def add_stat( StatUpdate):
     if data.stat not in ["str", "dex", "int"]:
         raise HTTPException(status_code=400, detail="Неверная характеристика")
     conn = sqlite3.connect(DB_PATH)
@@ -758,80 +756,96 @@ async def adventure_endpoint(user_id: int, action: str = "start"):
 
     player_data = {
         "nickname": row[0],
-        "class": row[1],
-        "str": row[2],
-        "dex": row[3],
-        "int": row[4],
-        "hp": row[5],
-        "max_hp": row[6],
-        "weapon": row[7],
-        "armor": row[8],
+        "class": row[1], "str": row[2], "dex": row[3], "int": row[4],
+        "hp": row[5], "max_hp": row[6], "weapon": row[7], "armor": row[8]
     }
     combat_state = json.loads(row[9] or "{}")
 
     if action == "start":
-        # Начинаем бой
         enemies = start_combat(3)
-        new_combat_state = {"active": True, "enemies": enemies}
-        # Сохраняем
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("UPDATE characters SET combat_state = ? WHERE user_id = ?", (json.dumps(new_combat_state), user_id))
-        conn.commit()
-        conn.close()
-        # Факты для нарратора
-        facts = {
-            "player_name": player_data["nickname"],
-            "class": player_data["class"],
-            "event_summary": "Встреча с врагами",
-            "outcome_description": "Игрок столкнулся с тремя гоблинами!"
-        }
-        narrative = narrate_fallback(facts)
-        return {"narrative": narrative}
-
-    else:
-        if not combat_state.get("active"):
-            return {"narrative": "Нет активного боя."}
-
-        result = process_combat_round(player_data, action, combat_state["enemies"])
-        if "error" in result:
-            return {"narrative": result["error"]}
-
-        # Применяем результат к игроку
-        apply_res = apply_results(user_id, result)
-        if not apply_res.get("alive", True):
-            # Игрок мёртв — сброс боя
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("UPDATE characters SET combat_state = '{}' WHERE user_id = ?", (user_id,))
-            conn.commit()
-            conn.close()
-            return {"narrative": "Ты пал в бою... Возвращайся сильнее!"}
-
-        # Обновляем состояние боя
-        alive_enemies = [e for e in combat_state["enemies"] if e["hp"] > 0]
-        if alive_enemies:
-            new_state = {"active": True, "enemies": alive_enemies}
-        else:
-            new_state = {}
+        new_state = {"active": True, "enemies": enemies}
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("UPDATE characters SET combat_state = ? WHERE user_id = ?", (json.dumps(new_state), user_id))
         conn.commit()
         conn.close()
 
-        # Генерируем повествование
-        outcome_desc = ""
-        if result["enemy_killed"]:
-            outcome_desc += f"Один из врагов повержен! "
-        outcome_desc += f"Ты получил урон и теперь у тебя {apply_res['new_hp']} HP."
         facts = {
             "player_name": player_data["nickname"],
-            "class": player_data["class"],
-            "event_summary": "Боевой раунд",
-            "outcome_description": outcome_desc
+            "player_class": player_data["class"],
+            "event_summary": "Начало боя",
+            "action": "вступил в схватку",
+            "remaining_enemies": 3,
+            "combat_continues": True
         }
-        narrative = narrate_fallback(facts)
+        # Используем ИИ для генерации повествования
+        narrative = await narrate_with_deepseek(facts)
+        return {"narrative": narrative}
+
+    else:
+        if not combat_state.get("active"):
+            return {"narrative": "Нет активного боя."}
+
+        prev_hp = player_data["hp"] # Сохраняем HP до боя
+
+        result = process_combat_round(player_data, action, combat_state["enemies"])
+        if "error" in result:
+            return {"narrative": result["error"]}
+
+        apply_res = apply_results(user_id, result)
+        if apply_res.get("error"):
+            return {"narrative": apply_res["error"]}
+
+        if not apply_res["alive"]:
+            facts = {
+                "player_name": player_data["nickname"],
+                "player_class": player_data["class"],
+                "defeat": True
+            }
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("UPDATE characters SET combat_state = '{}' WHERE user_id = ?", (user_id,))
+            conn.commit()
+            conn.close()
+            narrative = await narrate_with_deepseek(facts)
+            return {"narrative": narrative}
+
+        alive_enemies = [e for e in combat_state["enemies"] if e["hp"] > 0]
+
+        # --- ФОРМИРОВАНИЕ ФАКТОВ ДЛЯ НАРРАТОРА ---
+        facts = {
+            "player_name": player_data["nickname"],
+            "player_class": player_data["class"],
+            "event_summary": "Боевой раунд",
+            "action": action,
+            "enemy_killed": result["enemy_killed"],
+            "enemy_type_killed": result["enemy_type_killed"],
+            "player_damage_taken": result["player_damage_taken"],
+            "prev_hp": prev_hp,
+            "new_hp": apply_res["new_hp"],
+            "max_hp": apply_res["max_hp"],
+            "remaining_enemies": result["remaining_enemies"],
+            "combat_continues": result["combat_continues"]
+        }
+
+        # --- СОХРАНЕНИЕ СОСТОЯНИЯ ---
+        if result["combat_continues"]:
+            new_state = {"active": True, "enemies": alive_enemies}
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("UPDATE characters SET combat_state = ? WHERE user_id = ?", (json.dumps(new_state), user_id))
+            conn.commit()
+            conn.close()
+        else:
+            facts["victory"] = True
+            facts["combat_continues"] = False
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("UPDATE characters SET combat_state = '{}' WHERE user_id = ?", (user_id,))
+            conn.commit()
+            conn.close()
+
+        narrative = await narrate_with_deepseek(facts)
         return {"narrative": narrative}
 
 
