@@ -223,7 +223,7 @@ def screen_class_select():
         <script>
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
-            const userId = urlParams.get('user_id');
+            const userId = parseInt(urlParams.get('user_id'));
             function showClass(className) {
                 window.location.href = '/app/class_info?class=' + encodeURIComponent(className) + '&user_id=' + userId;
             }
@@ -263,7 +263,7 @@ def screen_class_info():
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
             const className = decodeURIComponent(urlParams.get('class'));
-            const userId = urlParams.get('user_id');
+            const userId = parseInt(urlParams.get('user_id')); // <-- parseInt добавлен
             const descriptions = {
                 "Маг": "Владыка стихий и древних заклинаний. Наносит огромный магический урон, но хрупок в ближнем бою.",
                 "Воин": "Неудержимая сила и ярость. Высокое здоровье и урон в ближнем бою.",
@@ -279,11 +279,19 @@ def screen_class_info():
                     const res = await fetch('/api/create_character', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({user_id: userId, class_name: className})
+                        // Убедимся, что user_id - число
+                        body: JSON.stringify({user_id: parseInt(userId), class_name: className}) 
                     });
                     if (res.ok) window.location.href = '/app/main_menu?user_id=' + userId;
-                    else alert('Ошибка создания персонажа');
-                } catch (e) { alert('Ошибка сети'); }
+                    else {
+                        const errorData = await res.json();
+                        console.error("Ошибка API:", errorData);
+                        alert('Ошибка создания персонажа: ' + (errorData.detail || 'Неизвестная ошибка'));
+                    }
+                } catch (e) { 
+                    console.error("Ошибка сети:", e); 
+                    alert('Ошибка сети'); 
+                }
             }
         </script>
     </body>
@@ -330,7 +338,7 @@ def screen_main_menu():
         <script>
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
-            const userId = urlParams.get('user_id');
+            const userId = parseInt(urlParams.get('user_id'));
             async function loadNickname() {
                 try {
                     const res = await fetch(`/api/character/${userId}`);
@@ -391,7 +399,7 @@ def screen_character():
         <script>
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
-            const userId = urlParams.get('user_id');
+            const userId = parseInt(urlParams.get('user_id'));
             let points = 0;
             function goBack() {
                 window.location.href = '/app/main_menu?user_id=' + userId;
@@ -470,7 +478,7 @@ def screen_inventory():
         <script>
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
-            const userId = urlParams.get('user_id');
+            const userId = parseInt(urlParams.get('user_id'));
             function goBack() {
                 window.location.href = '/app/main_menu?user_id=' + userId;
             }
@@ -542,7 +550,7 @@ def adventure_screen():
         <script>
             Telegram.WebApp.ready(); Telegram.WebApp.expand();
             const urlParams = new URLSearchParams(window.location.search);
-            const userId = urlParams.get('user_id');
+            const userId = parseInt(urlParams.get('user_id'));
             let conversation = [];
 
             function goBack() {
@@ -641,7 +649,7 @@ def profile():
 # === API ЭНДПОИНТЫ ===
 
 @app.post("/api/check_username")
-async def check_username(data: UsernameCreate):
+async def check_username(data: UsernameCreate): # <-- Явно указываем имя и тип параметра
     if not re.match(r"^[a-zA-Z0-9_]{3,16}$", data.username):
         raise HTTPException(status_code=400, detail="Неверный формат ника")
     conn = sqlite3.connect(DB_PATH)
@@ -652,11 +660,10 @@ async def check_username(data: UsernameCreate):
     cursor.execute("INSERT OR REPLACE INTO characters (user_id, username) VALUES (?, ?)", (data.user_id, data.username))
     conn.commit()
     conn.close()
-    return {"status": "ok"}
 
 
 @app.post("/api/create_character")
-async def create_character( CharacterCreate):
+async def create_character(data: CharacterCreate): # <-- Явно указываем имя и тип параметра
     if data.class_name not in CLASS_STATS:
         raise HTTPException(status_code=400, detail="Неверный класс")
     base = CLASS_STATS[data.class_name]
@@ -721,7 +728,7 @@ async def get_character(user_id: int):
 
 
 @app.post("/api/add_stat")
-async def add_stat( StatUpdate):
+async def add_stat(data: StatUpdate): # <-- Явно указываем имя и тип параметра
     if data.stat not in ["str", "dex", "int"]:
         raise HTTPException(status_code=400, detail="Неверная характеристика")
     conn = sqlite3.connect(DB_PATH)
