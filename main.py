@@ -819,24 +819,23 @@ async def adventure_endpoint(user_id: int, action: str = "start"):
 
         alive_enemies = [e for e in combat_state["enemies"] if e["hp"] > 0]
 
-        # --- ФОРМИРОВАНИЕ ФАКТОВ ДЛЯ НАРРАТОРА ---
         facts = {
             "player_name": player_data["nickname"],
             "player_class": player_data["class"],
             "event_summary": "Боевой раунд",
             "action": action,
-            "enemy_killed": result.get("enemy_killed", False),  # <-- Исправлено
-            "enemy_type_killed": result.get("enemy_type_killed", ""),  # <-- Исправлено
-            "player_damage_taken": result.get("player_damage_taken", 0),  # <-- Исправлено
+            "enemy_killed": result.get("enemy_killed", False),
+            "enemy_type_killed": result.get("enemy_type_killed", ""),
+            "player_damage_taken": result.get("player_damage_taken", 0),
             "prev_hp": prev_hp,
             "new_hp": apply_res["new_hp"],
-            "max_hp": player_data["max_hp"],  # <-- Исправлено (берётся из player_data)
-            "remaining_enemies": result.get("remaining_enemies", 0),  # <-- Исправлено
-            "combat_continues": result.get("combat_continues", False)  # <-- Исправлено
+            "max_hp": player_data["max_hp"],  # <-- Взято из player_data
+            "remaining_enemies": result.get("remaining_enemies", 0),
+            "combat_continues": combat_continues  # <-- Используем переменную
         }
 
-        # --- СОХРАНЕНИЕ СОСТОЯНИЯ ---
-        if result["combat_continues"]:
+        if combat_continues:  # <-- Используем переменную, а не result["combat_continues"]
+            # Сохраняем обновлённое состояние боя
             new_state = {"active": True, "enemies": alive_enemies}
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
@@ -844,8 +843,10 @@ async def adventure_endpoint(user_id: int, action: str = "start"):
             conn.commit()
             conn.close()
         else:
+            # Бой окончен (все враги мертвы)
             facts["victory"] = True
-            facts["combat_continues"] = False
+            facts["combat_continues"] = False  # <-- Убедимся, что в facts это False
+            # Сброс состояния боя
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
             cur.execute("UPDATE characters SET combat_state = '{}' WHERE user_id = ?", (user_id,))
