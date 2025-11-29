@@ -826,7 +826,7 @@ async def adventure_endpoint(user_id: int, action: str = "start"):
             "event_summary": "Боевой раунд",
             "action": action,
             "enemy_killed": result["enemy_killed"],
-            "enemy_type_killed": result["enemy_type_killed"],
+            "enemy_type_killed": result.get("enemy_type_killed", ""),  # <-- ИСПРАВЛЕНО: .get()
             "player_damage_taken": result["player_damage_taken"],
             "prev_hp": prev_hp,
             "new_hp": apply_res["new_hp"],
