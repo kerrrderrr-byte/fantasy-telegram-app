@@ -63,6 +63,17 @@ WEAPON_STATS = {
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    # Проверяем, есть ли столбец combat_state
+    cursor.execute("PRAGMA table_info(characters)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if "combat_state" not in columns:
+        cursor.execute("ALTER TABLE characters ADD COLUMN combat_state TEXT DEFAULT '{}'")
+        print("Столбец 'combat_state' добавлен в таблицу 'characters'.")
+    else:
+        print("Столбец 'combat_state' уже существует.")
+
+    # Создаём таблицу, если её не было (это безопасно, если таблица уже есть)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS characters (
             user_id INTEGER PRIMARY KEY,
@@ -82,9 +93,8 @@ def init_db():
             weapon TEXT,
             armor TEXT,
             inventory TEXT DEFAULT '[]',
-            adventure_log TEXT DEFAULT '[]',
-            combat_state TEXT DEFAULT '{}',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            adventure_log TEXT DEFAULT '[]'
+            -- combat_state уже добавлен через ALTER TABLE выше
         )
     """)
     conn.commit()
