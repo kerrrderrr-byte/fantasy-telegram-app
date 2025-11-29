@@ -820,20 +820,19 @@ async def adventure_endpoint(user_id: int, action: str = "start"):
         alive_enemies = [e for e in combat_state["enemies"] if e["hp"] > 0]
 
         # --- ФОРМИРОВАНИЕ ФАКТОВ ДЛЯ НАРРАТОРА ---
-        # --- ФОРМИРОВАНИЕ ФАКТОВ ДЛЯ НАРРАТОРА ---
         facts = {
             "player_name": player_data["nickname"],
             "player_class": player_data["class"],
             "event_summary": "Боевой раунд",
             "action": action,
-            "enemy_killed": result["enemy_killed"],
-            "enemy_type_killed": result.get("enemy_type_killed", ""),
-            "player_damage_taken": result["player_damage_taken"],
+            "enemy_killed": result.get("enemy_killed", False),  # <-- Исправлено
+            "enemy_type_killed": result.get("enemy_type_killed", ""),  # <-- Исправлено
+            "player_damage_taken": result.get("player_damage_taken", 0),  # <-- Исправлено
             "prev_hp": prev_hp,
             "new_hp": apply_res["new_hp"],
-            "max_hp": player_data["max_hp"],  # <-- ИСПРАВЛЕНО: берём из player_data
-            "remaining_enemies": result["remaining_enemies"],
-            "combat_continues": result["combat_continues"]
+            "max_hp": player_data["max_hp"],  # <-- Исправлено (берётся из player_data)
+            "remaining_enemies": result.get("remaining_enemies", 0),  # <-- Исправлено
+            "combat_continues": result.get("combat_continues", False)  # <-- Исправлено
         }
 
         # --- СОХРАНЕНИЕ СОСТОЯНИЯ ---
