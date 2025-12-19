@@ -1,28 +1,74 @@
 # storyteller.py
 import os
 import httpx
-from typing import List, Dict
+from typing import List, Dict, Optional
+
+from Fnatasy.StoryBot import world
+from world import get_region, Region, NPC, Enemy, Quest
+from pydantic import BaseModel
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# Контекст-системный промпт (настраивайте под ваш мир!)
-# storyteller.py — ОБНОВЛЁННЫЙ SYSTEM_PROMPT
-
+# Системный промпт — БЕЗ деталей мира
 SYSTEM_PROMPT = (
     "Ты — Древний Повествователь мира «Тени и Огня». "
-    "Ты НИКОГДА не выходишь из роли. Ты не игрок, не помощник, не ассистент. "
-    "Ты — голос мира: поэтичный, таинственный, немного мрачный, но справедливый. "
-    "Твои ответы: "
-    "- Короткие (1–4 предложения), как устная сага. "
-    "- Богатые образами: используй эмодзи (🌲🐺🕯️⚔️🌌) для атмосферы. "
-    "- Реагируют ТОЛЬКО на действия игрока, не предлагают выбор. "
-    "- Никогда не говори: «Как повествователь, я...», «Я не могу...», «Вы можете...». "
-    "- Никогда не упоминай ИИ, технологии, правила. "
-    "- Если игрок пишет вне контекста — мягко возвращай в мир: "
-    "  *«Ветер унёс твои странные слова... Снова перед тобой — три пути»* "
-    "- Запрещено: диалоги от лица игрока, списки, markdown (**), ###, ---."
+    "Ты описываешь мир, реагируешь на действия игрока живо и поэтично. "
+    "Используй эмодзи (🌲🐺⚔️🕯️) для атмосферы. "
+    "НЕ упоминай детали, которых нет в контексте ниже. "
+    "НЕ выходи из роли. НЕ предлагай варианты — пусть игрок решает сам."
 )
+
+
+class PlayerState(BaseModel):
+    current_region: str = "Ебеньград"
+    inventory: Dict[str, int] = {}
+    killed_enemies: List[str] = []
+    active_quests: List[str] = []
+
+
+def _build_context(player: PlayerState) -> str:
+    """Формирует КОРОТКИЙ контекст для DeepSeek (~200 токенов)"""
+    region = get_region(player.current_region)
+    if not region:
+        return f"Игрок в неизвестном месте: {player.current_region}"
+
+    parts = [f"Место: {region.name}"]
+    parts.append(f"Описание: {region.description}")
+
+    if region.npcs:
+        npcs = ", ".join([f"{n.name} ({n.role})" for n in region.npcs])
+        parts.append(f"NPC: {npcs}")
+
+    if region.enemies:
+        enemies = ", ".join([e.name for e in region.enemies])
+        parts.append(f"Враги: {enemies}")
+
+    # Активные квесты (только статус, без триггеров)
+    quest_names = []
+    for qid in player.active_quests:
+        q = world.get_quest_by_id(qid)
+        if q:
+            quest_names.append(q.name)
+    if quest_names:
+        parts.append(f"Квесты: {', '.join(quest_names)}")
+
+    # Инвентарь (только непустой)
+    if player.inventory:
+        inv = ", ".join([f"{cnt}×{item}" for item, cnt in player.inventory.items() if cnt > 0])
+        parts.append(f"Инвентарь: [{inv}]")
+
+    return "\n".join(parts)
+
+
+async def get_ai_response(player_state: PlayerState, user_action: str) -> str:
+    context = _build_context(player_state)
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT + "\n\n=== КОНТЕКСТ ===\n" + context},
+        {"role": "user", "content": f"Действие игрока: {user_action}"}
+    ]
+
 
 # ✅ Пост-обработка ответа: чистим от лишнего
 def sanitize_ai_response(text: str) -> str:
