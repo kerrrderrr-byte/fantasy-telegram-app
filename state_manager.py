@@ -1,6 +1,6 @@
 # state_manager.py
 from typing import Dict
-from world import PlayerState
+from storyteller import PlayerState
 import json
 
 # В памяти (для демо). В продакшене → Redis / PostgreSQL.
