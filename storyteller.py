@@ -1,12 +1,12 @@
 # storyteller.py
 import os
 import httpx
-from typing import List, Dict, Optional
-from world import get_region, Region, NPC, Enemy, Quest
+from typing import List, Dict
+from world import get_region, get_quest_by_id, Region, NPC, Enemy, Quest
 from pydantic import BaseModel
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"  # ← убраны лишние пробелы!
 
 # Системный промпт — БЕЗ деталей мира
 SYSTEM_PROMPT = (
@@ -25,7 +25,7 @@ class PlayerState(BaseModel):
     active_quests: List[str] = []
 
 
-def _build_context(player: PlayerState, world=None) -> str:
+def _build_context(player: PlayerState) -> str:
     """Формирует КОРОТКИЙ контекст для DeepSeek (~200 токенов)"""
     region = get_region(player.current_region)
     if not region:
@@ -42,10 +42,10 @@ def _build_context(player: PlayerState, world=None) -> str:
         enemies = ", ".join([e.name for e in region.enemies])
         parts.append(f"Враги: {enemies}")
 
-    # Активные квесты (только статус, без триггеров)
+    # Активные квесты
     quest_names = []
     for qid in player.active_quests:
-        q = world.get_quest_by_id(qid)
+        q = get_quest_by_id(qid)
         if q:
             quest_names.append(q.name)
     if quest_names:
@@ -59,26 +59,17 @@ def _build_context(player: PlayerState, world=None) -> str:
     return "\n".join(parts)
 
 
-async def get_ai_response(player_state: PlayerState, user_action: str) -> str:
-    context = _build_context(player_state)
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT + "\n\n=== КОНТЕКСТ ===\n" + context},
-        {"role": "user", "content": f"Действие игрока: {user_action}"}
-    ]
-
-
-# ✅ Пост-обработка ответа: чистим от лишнего
 def sanitize_ai_response(text: str) -> str:
-    # Убираем потенциальные markdown-звёздочки (жирный/курсив)
+    # Убираем потенциальные markdown-звёздочки
     text = text.replace("**", "").replace("*", "")
-    # Убираем заголовки, разделители
+    # Убираем заголовки и разделители
     text = text.replace("###", "").replace("---", "").strip()
-    # Обрезаем до 4 предложений (защита от многословия)
+    # Обрезаем до 4 предложений
     sentences = text.split('. ')
     if len(sentences) > 4:
         text = '. '.join(sentences[:4]) + '.'
     return text.strip()
+
 
 async def get_deepseek_response(messages: List[Dict[str, str]]) -> str:
     if not DEEPSEEK_API_KEY:
@@ -113,3 +104,15 @@ async def get_deepseek_response(messages: List[Dict[str, str]]) -> str:
             return "⏳ *Лимит запросов.* Подожди 30 секунд."
         else:
             return f"💥 *Ошибка связи с DeepSeek:* `{error_msg[:100]}`"
+
+
+async def get_ai_response(player_state: PlayerState, user_action: str) -> str:
+    context = _build_context(player_state)
+
+    messages = [
+        {"role": "user", "content": f"Действие игрока: {user_action}"}
+    ]
+
+    raw_response = await get_deepseek_response(messages)
+    cleaned_response = sanitize_ai_response(raw_response)
+    return cleaned_response
