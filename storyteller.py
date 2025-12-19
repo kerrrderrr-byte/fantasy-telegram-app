@@ -2,8 +2,6 @@
 import os
 import httpx
 from typing import List, Dict, Optional
-
-from Fnatasy.StoryBot import world
 from world import get_region, Region, NPC, Enemy, Quest
 from pydantic import BaseModel
 
@@ -27,7 +25,7 @@ class PlayerState(BaseModel):
     active_quests: List[str] = []
 
 
-def _build_context(player: PlayerState) -> str:
+def _build_context(player: PlayerState, world=None) -> str:
     """Формирует КОРОТКИЙ контекст для DeepSeek (~200 токенов)"""
     region = get_region(player.current_region)
     if not region:
