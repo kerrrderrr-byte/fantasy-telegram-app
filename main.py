@@ -90,6 +90,20 @@ async def adventure_step(request: Request):
             _handle_purchase(state, user_action)
             _check_quest_triggers(state)
 
+        events = []  # ← новые события для ИИ
+
+        if state.current_region == "Ебеньград":
+            if _handle_purchase(state, user_action):
+                # Определим, что именно куплено
+                if "бутер" in user_action.lower():
+                    events.append("Игрок купил бутерброд у Сани в таверне.")
+                if "кофе" in user_action.lower():
+                    events.append("Игрок заказал кофе у Сани.")
+            _check_quest_triggers(state)
+
+        # Передайте события в get_ai_response
+        ai_response = await get_ai_response(state, user_action, events=events)
+
         # 🧭 Простейшая навигация (для демо)
         if "логово" in user_action.lower() and "едь" in user_action.lower():
             state.current_region = "Логово Рыжей"

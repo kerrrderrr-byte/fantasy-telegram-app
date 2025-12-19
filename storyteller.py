@@ -106,13 +106,15 @@ async def get_deepseek_response(messages: List[Dict[str, str]]) -> str:
             return f"💥 *Ошибка связи с DeepSeek:* `{error_msg[:100]}`"
 
 
-async def get_ai_response(player_state: PlayerState, user_action: str) -> str:
+async def get_ai_response(player_state: PlayerState, user_action: str, events: list = None) -> str:
     context = _build_context(player_state)
 
-    messages = [
-        {"role": "user", "content": f"Действие игрока: {user_action}"}
-    ]
+    system_msg = SYSTEM_PROMPT + "\n\n=== КОНТЕКСТ ===\n" + context
 
-    raw_response = await get_deepseek_response(messages)
-    cleaned_response = sanitize_ai_response(raw_response)
-    return cleaned_response
+    user_msg = f"Действие игрока: {user_action}"
+    if events:
+        user_msg += "\n\n=== СОБЫТИЯ ===\n" + "\n".join(events)
+
+    messages = [{"role": "user", "content": user_msg}]
+    raw_response = await get_deepseek_response([{"role": "system", "content": system_msg}] + messages)
+    return sanitize_ai_response(raw_response)
