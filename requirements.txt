@@ -1,4 +1,6 @@
-aiogram==3.13.0
+fastapi==0.115.0
+uvicorn==0.32.0
 python-dotenv
-aiohttp
+pydantic
 requests
+jinja2  # если захотите SSR
