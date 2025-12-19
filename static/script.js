@@ -17,6 +17,48 @@ const backBtn = document.getElementById('backBtn');
 const startBtn = document.getElementById('startBtn');
 const loadingEl = document.getElementById('loading');
 
+
+function typeTextWithWrap(container, text, onDone) {
+    container.innerHTML = ''; // очищаем контейнер
+    let i = 0;
+    const speed = 25; // ms per char
+
+    // Создаём span для "курсора"
+    const cursor = document.createElement('span');
+    cursor.textContent = '|';
+    cursor.style.color = '#c05bff';
+    cursor.style.marginLeft = '2px';
+    cursor.style.animation = 'blink 1s infinite';
+    container.appendChild(cursor);
+
+    function type() {
+        if (i < text.length) {
+            // Вставляем символ и ПЕРЕСЧИТЫВАЕМ переносы автоматически
+            const char = text.charAt(i);
+            const textNode = document.createTextNode(char);
+            container.insertBefore(textNode, cursor);
+            i++;
+
+            // Прокручиваем плавно вниз КАЖДЫЙ РАЗ
+            requestAnimationFrame(() => {
+                storyEl.scrollTo({
+                    top: storyEl.scrollHeight,
+                    behavior: 'smooth'
+                });
+            });
+
+            setTimeout(type, speed);
+        } else {
+            // Убираем курсор
+            container.removeChild(cursor);
+            if (onDone) onDone();
+        }
+    }
+
+    type();
+}
+
+
 // Переключение вида
 function showView(view) {
     menuView.style.display = view === 'menu' ? 'flex' : 'none';
@@ -32,89 +74,48 @@ function scrollToBottom(smooth = false) {
     });
 }
 
-// Эффект печатания текста
-function typeText(element, text, callback) {
-    element.classList.add('typing');
-    element.textContent = ''; // очищаем
 
-    let i = 0;
-    const speed = 25; // ms per char
 
-    function type() {
-        if (i < text.length) {
-            element.textContent += text.charAt(i);
-            i++;
-            requestAnimationFrame(() => setTimeout(type, speed));
-            scrollToBottom();
-        } else {
-            element.classList.remove('typing');
-            element.style.borderRight = 'none';
-            if (callback) callback();
-        }
-    }
 
-    type();
-}
-
-// Добавить сообщение в историю
-function addMessage(sender, text) {
-    const p = document.createElement('p');
-    p.innerHTML = `<strong>${sender}:</strong> ${text}`;
-    storyEl.appendChild(p);
-    scrollToBottom();
-}
 
 // Отправка действия
-async function sendAction(action = "") {
-    try {
-        loadingEl.textContent = "🧙‍♂️ Повествователь думает...";
-        loadingEl.style.display = "block";
-        sendBtn.disabled = true;
+async function sendAction(action) {
+    if (!action.trim()) return;
 
+    // 🔹 ШАГ 1: сразу добавляем сообщение игрока в чат
+    const playerMsg = document.createElement('p');
+    playerMsg.innerHTML = `<strong>Ты:</strong> ${action}`;
+    storyEl.appendChild(playerMsg);
+    inputEl.value = ''; // 🔹 сразу очищаем поле
+    scrollToBottom(true); // плавная прокрутка
+
+    // 🔹 ШАГ 2: показываем "печатает повествователь..."
+    const aiMsg = document.createElement('p');
+    aiMsg.innerHTML = `<strong>Повествователь:</strong> <span id="ai-typing"></span>`;
+    storyEl.appendChild(aiMsg);
+    const typingSpan = aiMsg.querySelector('#ai-typing');
+    typingSpan.textContent = '';
+    scrollToBottom(true);
+
+    try {
         const response = await fetch("/api/step", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                initData: WebApp.initData || "",
-                action: action
-            })
+            body: JSON.stringify({ initData: WebApp.initData, action })
         });
 
         const data = await response.json();
 
         if (data.ok) {
-            // Очищаем поле ввода СРАЗУ
-            inputEl.value = "";
-
-            // Добавляем действие игрока
-            if (action) {
-                addMessage("Ты", action);
-            } else {
-                storyEl.innerHTML = ''; // чистим при старте
-            }
-
-            // Анимация печатания ответа
-            const p = document.createElement('p');
-            p.innerHTML = "<strong>Повествователь:</strong> ";
-            const span = document.createElement('span');
-            p.appendChild(span);
-            storyEl.appendChild(p);
-            scrollToBottom();
-
-            typeText(span, data.response, () => {
-                loadingEl.style.display = "none";
-                sendBtn.disabled = false;
-                inputEl.focus();
+            // 🔹 ШАГ 3: заменяем "печатает..." на реальный типинг с переносом
+            typeTextWithWrap(typingSpan, data.response, () => {
+                // Готово
             });
-
         } else {
-            throw new Error(data.error || "Неизвестная ошибка");
+            typingSpan.textContent = `❌ Ошибка: ${data.error}`;
         }
     } catch (err) {
-        console.error("Ошибка:", err);
-        loadingEl.textContent = `❌ ${err.message}`;
-        setTimeout(() => loadingEl.style.display = "none", 3000);
-        sendBtn.disabled = false;
+        typingSpan.textContent = `💥 ${err.message}`;
     }
 }
 
