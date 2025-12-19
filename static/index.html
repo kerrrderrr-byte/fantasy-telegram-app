@@ -1,3 +1,4 @@
+<!-- static/index.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,91 +6,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>🧙‍♂️ Мир Теней и Огня</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', 'SF Pro', sans-serif;
-            background: #0b0912;
-            color: #e2d9ff;
-            height: 100vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-        .header {
-            padding: 16px;
-            text-align: center;
-            background: rgba(30, 20, 50, 0.6);
-            border-bottom: 1px solid #3a2a5a;
-        }
-        .header h1 {
-            font-size: 1.4rem;
-            background: linear-gradient(90deg, #ff9a3d, #c05bff);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-            font-weight: 700;
-        }
-        .story {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            line-height: 1.6;
-        }
-        .story p {
-            margin-bottom: 16px;
-        }
-        .input-area {
-            padding: 16px;
-            background: #150e28;
-            border-top: 1px solid #3a2a5a;
-        }
-        textarea {
-            width: 100%;
-            height: 80px;
-            padding: 12px;
-            border-radius: 12px;
-            border: 1px solid #4a3a6a;
-            background: #1a122a;
-            color: white;
-            font-size: 1rem;
-            resize: none;
-            margin-bottom: 12px;
-        }
-        button {
-            width: 100%;
-            padding: 14px;
-            background: linear-gradient(90deg, #8a2be2, #ff6b6b);
-            color: white;
-            border: none;
-            border-radius: 12px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            cursor: pointer;
-        }
-        button:active {
-            opacity: 0.8;
-        }
-        .loading {
-            display: none;
-            text-align: center;
-            color: #aaa;
-        }
-    </style>
+    <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-    <div class="header">
-        <h1>🧙‍♂️ Мир Теней и Огня</h1>
-    </div>
-    <div class="story" id="story">
-        <p>Загрузка приключения...</p>
-    </div>
-    <div class="input-area">
-        <textarea id="actionInput" placeholder="Опиши своё действие: например, «иду к пещере», «бросаю камень», «спрашиваю волка»..."></textarea>
-        <button id="sendBtn">▶️ Отправить действие</button>
-        <div class="loading" id="loading">Голос повествователя звучит...</div>
+    <!-- МЕНЮ -->
+    <div class="menu" id="menuView">
+        <h1>Мир Теней и Огня</h1>
+        <p>Ты — последний странник, чья душа помнит древние заклинания. Время выбирать: сдаться тьме или зажечь искру нового рассвета.</p>
+        <button class="adventure-btn" id="startBtn">
+            <span class="icon">⚔️</span> Начать приключение
+        </button>
     </div>
 
-    <script src="script.js"></script>
+    <!-- ПРИКЛЮЧЕНИЕ -->
+    <div class="adventure-view" id="adventureView">
+        <div class="header">
+            <button class="back-btn" id="backBtn">⬅️</button>
+            <h2>🧙‍♂️ Приключение</h2>
+        </div>
+        <div class="story" id="story">
+            <!-- Сюда подгружается история -->
+        </div>
+        <div class="input-area">
+            <textarea id="actionInput" placeholder="Опиши действие: 'иду в пещеру', 'бросаю факел', 'спрашиваю духа'..."></textarea>
+            <button class="send-btn" id="sendBtn">Отправить</button>
+            <div class="loading" id="loading"></div>
+        </div>
+    </div>
+
+    <script src="static/script.js"></script>
 </body>
 </html>
